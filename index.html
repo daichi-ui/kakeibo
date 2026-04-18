@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>家計簿</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Hiragino Sans", sans-serif;
+    background: #f5f5f7; color: #222;
+    padding: 12px;
+  }
+  .container { max-width: 480px; margin: 0 auto; padding-bottom: 80px; }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 0;
+  }
+  header h1 { flex: 1; text-align: center; font-size: 18px; }
+  button {
+    padding: 8px 12px; border: none; border-radius: 8px;
+    background: #0a84ff; color: white; font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; }
+
+  .summary {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px; margin: 12px 0;
+  }
+  .card {
+    background: white; padding: 12px; border-radius: 12px;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .card-label { font-size: 11px; color: #888; }
+  .card-value { font-size: 18px; font-weight: 600; margin-top: 4px; }
+
+  .day-group { margin-top: 16px; }
+  .day-group h3 {
+    font-size: 12px; color: #888; margin-bottom: 4px;
+    padding-left: 4px;
+  }
+  .tx-row {
+    display: grid; grid-template-columns: 1fr auto auto;
+    gap: 8px; align-items: center;
+    background: white; padding: 10px 12px;
+    border-radius: 8px; margin-bottom: 4px;
+  }
+  .tx-store { font-size: 14px; }
+  .tx-cat {
+    display: inline-block; font-size: 10px;
+    background: #e5e5ea; color: #555;
+    padding: 2px 6px; border-radius: 4px;
+    margin-top: 2px;
+  }
+  .tx-amount { font-size: 14px; font-weight: 600; }
+  .tx-row.manual { border-left: 3px solid #ff9500; }
+  .tx-delete {
+    background: none; border: none; color: #ccc;
+    font-size: 18px; padding: 4px 8px; cursor: pointer;
+  }
+  .tx-delete:hover { color: #ff3b30; }
+
+  .loading, .empty {
+    text-align: center; padding: 40px 20px;
+    color: #888;
+  }
+
+  .fab {
+    position: fixed;
+    bottom: 20px; right: 20px;
+    width: 56px; height: 56px;
+    border-radius: 28px;
+    font-size: 28px; padding: 0;
+    box-shadow: 0 4px 12px rgba(10,132,255,0.4);
+    z-index: 10;
+  }
+
+  dialog {
+    width: calc(100% - 32px);
+    max-width: 400px;
+    border: none;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.5); }
+  dialog h2 { margin-bottom: 16px; font-size: 16px; }
+  dialog label {
+    display: block;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #555;
+  }
+  dialog input, dialog select {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    margin-top: 4px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    background: white;
+  }
+  dialog .buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  dialog .buttons button { flex: 1; padding: 10px; }
+  dialog #cancel-btn {
+    background: #e5e5ea;
+    color: #333;
+  }
+
+  .toast {
+    position: fixed; bottom: 90px; left: 50%;
+    transform: translateX(-50%);
+    background: #333; color: white;
+    padding: 10px 20px; border-radius: 20px;
+    opacity: 0; transition: opacity 0.3s;
+    z-index: 20;
+    font-size: 13px;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <button id="prev">◀</button>
+    <h1 id="month-label">-</h1>
+    <button id="next">▶</button>
+  </header>
+
+  <div class="summary">
+    <div class="card">
+      <div class="card-label">今月合計</div>
+      <div class="card-value" id="total">¥0</div>
+    </div>
+    <div class="card">
+      <div class="card-label">件数</div>
+      <div class="card-value" id="count">0</div>
+    </div>
+  </div>
+
+  <div id="list" class="loading">読み込み中...</div>
+
+</div>
+
+<button id="fab" class="fab">＋</button>
+
+<dialog id="modal">
+  <h2>手動追加</h2>
+  <form id="tx-form">
+    <label>日付
+      <input type="date" name="date" required>
+    </label>
+    <label>店舗
+      <input type="text" name="store" required placeholder="例: セブンイレブン">
+    </label>
+    <label>金額
+      <input type="number" name="amount" required min="0" step="1" placeholder="円" inputmode="numeric">
+    </label>
+    <label>カテゴリ
+      <select name="category"></select>
+    </label>
+    <label>メモ
+      <input type="text" name="memo" placeholder="任意">
+    </label>
+    <div class="buttons">
+      <button type="button" id="cancel-btn">キャンセル</button>
+      <button type="submit" id="submit-btn">追加</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast"></div>
+
+<script>
+  const API_URL = 'https://script.google.com/macros/s/AKfycbyfb77wmD3D2lHl8GvJvCtMuhuUsjtD2VJvBdG3CZIFYDlTF-PMPwwGISCksBfCXhzw/exec';
+
+  const CATEGORIES = ["食費","交通費","光熱費","通信費","娯楽","医療","衣類","日用品","外食","定期","Amazon","東京メトロ","その他"];
+
+  const CATEGORY_RULES = [
+    ['食費', ['スーパー','マルエツ','イオン','西友','コープ','ライフ','セブン','ファミマ','ローソン','ミニストップ']],
+    ['東京メトロ', ['東京メトロ','TOKYOMETRO','TOKYO METRO']],
+    ['交通費', ['JR','Suica','PASMO','パスモ','電車','バス','タクシー']],
+    ['光熱費', ['東京電力','東ガス','東京ガス','電気','ガス','水道']],
+    ['通信費', ['ドコモ','docomo','au','ソフトバンク','SoftBank','楽天モバイル']],
+    ['娯楽', ['Netflix','Spotify','映画','ゲーム','DMM','TICKET']],
+    ['医療', ['病院','薬局','クリニック','医院','ドラッグ']],
+    ['衣類', ['ユニクロ','UNIQLO','ZARA','無印','GU']],
+    ['外食', ['レストラン','カフェ','スタバ','マック','吉野家','すき家','マクドナルド','サイゼリヤ']],
+    ['Amazon', ['Amazon','アマゾン','AMAZON']],
+  ];
+  function guessCategory(store) {
+    for (const [cat, kws] of CATEGORY_RULES) {
+      if (kws.some(kw => store.includes(kw))) return cat;
+    }
+    return 'その他';
+  }
+
+  const state = { month: new Date().toISOString().slice(0, 7) };
+
+  function yen(n) { return '¥' + Number(n).toLocaleString(); }
+
+  function today() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+
+  function shiftMonth(delta) {
+    const [y, m] = state.month.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    state.month = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    load();
+  }
+
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2500);
+  }
+
+  async function load() {
+    document.getElementById('month-label').textContent = state.month;
+    document.getElementById('list').className = 'loading';
+    document.getElementById('list').textContent = '読み込み中...';
+    try {
+      const res = await fetch(API_URL + '?month=' + state.month);
+      const data = await res.json();
+      render(data.transactions);
+    } catch (err) {
+      document.getElementById('list').textContent = '読み込み失敗: ' + err.message;
+    }
+  }
+
+  function render(txs) {
+    const total = txs.reduce((sum, t) => sum + Number(t.amount), 0);
+    document.getElementById('total').textContent = yen(total);
+    document.getElementById('count').textContent = txs.length + '件';
+
+    const listEl = document.getElementById('list');
+    listEl.className = '';
+
+    if (txs.length === 0) {
+      listEl.className = 'empty';
+      listEl.textContent = 'データなし';
+      return;
+    }
+
+    const groups = {};
+    for (const t of txs) { (groups[t.date] ||= []).push(t); }
+    const dates = Object.keys(groups).sort().reverse();
+
+    listEl.innerHTML = dates.map(date => `
+      <div class="day-group">
+        <h3>${date}</h3>
+        ${groups[date].map(t => `
+          <div class="tx-row ${t.source === 'manual' ? 'manual' : ''}">
+            <div>
+              <div class="tx-store">${escapeHtml(t.store)}</div>
+              <span class="tx-cat">${escapeHtml(t.category)}</span>
+            </div>
+            <div class="tx-amount">${yen(t.amount)}</div>
+            <button class="tx-delete" data-id="${escapeHtml(t.message_id)}">×</button>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  // ===== 手動追加 =====
+  function initCategorySelect() {
+    document.querySelector('select[name="category"]').innerHTML =
+      CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('');
+  }
+
+  function openModal() {
+    document.querySelector('input[name="date"]').value = today();
+    document.getElementById('modal').showModal();
+  }
+
+  function closeModal() {
+    document.getElementById('modal').close();
+    document.getElementById('tx-form').reset();
+  }
+
+  async function submitForm(e) {
+    e.preventDefault();
+    const form = e.target;
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = '追加中...';
+
+    const payload = {
+      action: 'add',
+      date: form.date.value,
+      store: form.store.value.trim(),
+      amount: Number(form.amount.value),
+      category: form.category.value,
+      memo: form.memo.value.trim(),
+    };
+
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json();
+      if (!result.ok) throw new Error(result.error || '追加失敗');
+      closeModal();
+      toast('追加しました');
+      load();
+    } catch (err) {
+      toast('失敗: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '追加';
+    }
+  }
+
+  // ===== 削除 =====
+  document.addEventListener('click', async (e) => {
+    if (!e.target.classList.contains('tx-delete')) return;
+    if (!confirm('削除しますか？')) return;
+
+    const msgId = e.target.dataset.id;
+    e.target.disabled = true;
+
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'delete', message_id: msgId }),
+      });
+      const result = await res.json();
+      if (!result.ok) throw new Error(result.error);
+      toast('削除しました');
+      load();
+    } catch (err) {
+      toast('削除失敗: ' + err.message);
+      e.target.disabled = false;
+    }
+  });
+
+  // イベント
+  document.getElementById('prev').addEventListener('click', () => shiftMonth(-1));
+  document.getElementById('next').addEventListener('click', () => shiftMonth(+1));
+  document.getElementById('fab').addEventListener('click', openModal);
+  document.getElementById('cancel-btn').addEventListener('click', closeModal);
+  document.getElementById('tx-form').addEventListener('submit', submitForm);
+
+  document.querySelector('input[name="store"]').addEventListener('input', (e) => {
+    document.querySelector('select[name="category"]').value = guessCategory(e.target.value);
+  });
+
+  initCategorySelect();
+  load();
+</script>
+</body>
+</html>
